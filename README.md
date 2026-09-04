@@ -1,0 +1,69 @@
+# Kwork Jobs Parser
+
+Google Apps Script project for monitoring Kwork order emails in Gmail and forwarding matching orders to Telegram.
+
+## Stack
+
+- Gmail notifications from Kwork
+- Google Apps Script
+- Telegram Bot API
+- `clasp` for local development
+
+## Local commands
+
+```powershell
+.\node_modules\.bin\clasp.cmd status
+.\node_modules\.bin\clasp.cmd push
+.\node_modules\.bin\clasp.cmd pull
+.\node_modules\.bin\clasp.cmd open
+```
+
+## Gmail setup
+
+Create a Gmail filter for Kwork emails and assign label `kwork-orders`.
+
+Recommended filter:
+
+- sender: Kwork notification address
+- subject: order notification keywords
+
+The script reads only messages with the configured label and adds `kwork-processed` after handling them.
+
+## Script properties
+
+Open Apps Script project settings and add these script properties:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `GMAIL_LABEL` default: `kwork-orders`
+- `PROCESSED_LABEL` default: `kwork-processed`
+- `SEARCH_WINDOW_HOURS` default: `24`
+- `MIN_BUDGET_RUB` default: `0`
+- `MAX_BUDGET_RUB` default: `0`
+- `REQUIRED_KEYWORDS` example: `python, parser, telegram`
+- `EXCLUDED_KEYWORDS` example: `design, logo`
+- `TELEGRAM_PARSE_MODE` default: `HTML`
+
+`MIN_BUDGET_RUB` and `MAX_BUDGET_RUB` use `0` to mean "disabled".
+
+## First run
+
+1. Push code:
+```powershell
+.\node_modules\.bin\clasp.cmd push
+```
+2. Open Apps Script:
+```powershell
+.\node_modules\.bin\clasp.cmd open
+```
+3. In editor, run `setDefaultConfig()` once.
+4. Add script properties with real Telegram values.
+5. Run `testTelegram()` once and approve permissions.
+6. Run `setupTrigger()` once to create a 5-minute trigger.
+7. Send a test Kwork email into the labeled mailbox and run `processKworkEmails()`.
+
+## Notes
+
+- Email parsing is based on notification content and may need adjustments if Kwork changes email format.
+- Budget extraction is heuristic and currently expects Latin currency markers such as `RUB`.
+- If you want, the next step is moving filters into a Google Sheet for non-code editing.
