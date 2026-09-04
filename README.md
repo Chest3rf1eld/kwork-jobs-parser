@@ -20,7 +20,7 @@ Google Apps Script project for monitoring Kwork order emails in Gmail and forwar
 
 ## Gmail setup
 
-Create a Gmail filter for Kwork emails and assign label `kwork-orders`.
+Create a Gmail filter for Kwork emails and assign label `TG_Notified`.
 
 Recommended filter:
 
@@ -35,7 +35,7 @@ Open Apps Script project settings and add these script properties:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
-- `GMAIL_LABEL` default: `kwork-orders`
+- `GMAIL_LABEL` default: `TG_Notified`
 - `PROCESSED_LABEL` default: `kwork-processed`
 - `SEARCH_WINDOW_HOURS` default: `24`
 - `MIN_BUDGET_RUB` default: `0`
@@ -43,6 +43,8 @@ Open Apps Script project settings and add these script properties:
 - `REQUIRED_KEYWORDS` example: `python, parser, telegram`
 - `EXCLUDED_KEYWORDS` example: `design, logo`
 - `TELEGRAM_PARSE_MODE` default: `HTML`
+- `TELEGRAM_MESSAGE_DELAY_MS` default: `1500`
+- `TELEGRAM_MAX_RETRIES` default: `3`
 
 `MIN_BUDGET_RUB` and `MAX_BUDGET_RUB` use `0` to mean "disabled".
 
