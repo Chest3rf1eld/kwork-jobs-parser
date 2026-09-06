@@ -8,8 +8,7 @@ const CONFIG_DEFAULTS = {
   excludedKeywords: '',
   telegramParseMode: 'HTML',
   telegramMessageDelayMs: 1500,
-  telegramMaxRetries: 3,
-  processedMessagesProperty: 'PROCESSED_MESSAGE_IDS'
+  telegramMaxRetries: 3
 };
 
 let lastTelegramSendAtMs_ = 0;
@@ -19,19 +18,33 @@ function processKworkEmails() {
   const config = getConfig_();
   const sourceLabel = getOrCreateLabel_(config.gmailLabel);
   const processedLabel = getOrCreateLabel_(config.processedLabel);
+  const gmailLabelIds = getGmailLabelIdsByName_([config.gmailLabel, config.processedLabel]);
+  const sourceLabelId = gmailLabelIds[config.gmailLabel];
+  const processedLabelId = gmailLabelIds[config.processedLabel];
   const threads = sourceLabel.getThreads(0, 50);
-  const processedMessageIds = getProcessedMessageIds_(config);
-  console.log('processKworkEmails:start label=%s processedLabel=%s threads=%s processedMessages=%s', config.gmailLabel, config.processedLabel, threads.length, Object.keys(processedMessageIds).length);
+  console.log('processKworkEmails:start label=%s sourceLabelId=%s processedLabel=%s processedLabelId=%s threads=%s', config.gmailLabel, sourceLabelId, config.processedLabel, processedLabelId, threads.length);
+
+  if (!sourceLabelId || !processedLabelId) {
+    throw new Error('Required Gmail labels were not found through Gmail API.');
+  }
 
   threads.forEach(function(thread) {
-    console.log('thread:start id=%s subject=%s hasProcessed=%s messageCount=%s', thread.getId(), thread.getFirstMessageSubject(), threadHasLabel_(thread, processedLabel.getName()), thread.getMessageCount());
+    console.log('thread:start id=%s subject=%s messageCount=%s', thread.getId(), thread.getFirstMessageSubject(), thread.getMessageCount());
 
     const messages = thread.getMessages();
     let foundProjectsInThread = false;
     let processedMessagesInThread = 0;
 
     messages.forEach(function(message) {
-      if (isMessageProcessed_(processedMessageIds, message.getId())) {
+      const gmailMessage = getGmailApiMessage_(message.getId());
+      const messageLabelIds = gmailMessage.labelIds || [];
+
+      if (messageLabelIds.indexOf(sourceLabelId) === -1) {
+        console.log('message:skip_without_source_label id=%s subject=%s', message.getId(), message.getSubject());
+        return;
+      }
+
+      if (messageLabelIds.indexOf(processedLabelId) !== -1) {
         console.log('message:skip_processed id=%s subject=%s', message.getId(), message.getSubject());
         return;
       }
@@ -56,19 +69,13 @@ function processKworkEmails() {
         console.log('message:no_matches id=%s', message.getId());
       }
 
-      markMessageProcessed_(processedMessageIds, message.getId());
+      markGmailMessageProcessed_(message.getId(), processedLabelId);
       processedMessagesInThread++;
+      console.log('message:marked_processed id=%s labelId=%s', message.getId(), processedLabelId);
     });
 
-    if (processedMessagesInThread > 0) {
-      saveProcessedMessageIds_(config, processedMessageIds);
-    }
-
-    if (foundProjectsInThread && !threadHasLabel_(thread, processedLabel.getName())) {
-      markThreadProcessed_(thread, processedLabel);
-      console.log('thread:marked_processed id=%s label=%s', thread.getId(), processedLabel.getName());
-    } else if (foundProjectsInThread) {
-      console.log('thread:already_marked_processed id=%s label=%s', thread.getId(), processedLabel.getName());
+    if (foundProjectsInThread) {
+      console.log('thread:done id=%s processedMessages=%s', thread.getId(), processedMessagesInThread);
     } else {
       console.log('thread:not_marked_no_projects id=%s', thread.getId());
     }
@@ -124,15 +131,21 @@ function testTelegram() {
 function debugKworkEmails() {
   const config = getConfig_();
   const sourceLabel = getOrCreateLabel_(config.gmailLabel);
-  const processedLabel = getOrCreateLabel_(config.processedLabel);
+  getOrCreateLabel_(config.processedLabel);
+  const gmailLabelIds = getGmailLabelIdsByName_([config.gmailLabel, config.processedLabel]);
+  const sourceLabelId = gmailLabelIds[config.gmailLabel];
+  const processedLabelId = gmailLabelIds[config.processedLabel];
   const threads = sourceLabel.getThreads(0, 10);
-  console.log('debugKworkEmails:start label=%s processedLabel=%s threads=%s', config.gmailLabel, config.processedLabel, threads.length);
+  console.log('debugKworkEmails:start label=%s sourceLabelId=%s processedLabel=%s processedLabelId=%s threads=%s', config.gmailLabel, sourceLabelId, config.processedLabel, processedLabelId, threads.length);
 
   threads.forEach(function(thread) {
-    const hasProcessed = threadHasLabel_(thread, processedLabel.getName());
-    console.log('debug:thread id=%s subject=%s hasProcessed=%s messageCount=%s', thread.getId(), thread.getFirstMessageSubject(), hasProcessed, thread.getMessageCount());
+    console.log('debug:thread id=%s subject=%s messageCount=%s', thread.getId(), thread.getFirstMessageSubject(), thread.getMessageCount());
 
     thread.getMessages().slice(-3).forEach(function(message) {
+      const gmailMessage = getGmailApiMessage_(message.getId());
+      const messageLabelIds = gmailMessage.labelIds || [];
+      const hasSource = messageLabelIds.indexOf(sourceLabelId) !== -1;
+      const hasProcessed = messageLabelIds.indexOf(processedLabelId) !== -1;
       const htmlBody = message.getBody() || '';
       const newOfferCount = countMatches_(htmlBody, /new_offer\?project/g);
       const rows = extractProjectRows_(htmlBody);
@@ -146,10 +159,12 @@ function debugKworkEmails() {
       });
 
       console.log(
-        'debug:message id=%s subject=%s date=%s htmlLength=%s newOfferCount=%s rows=%s projects=%s matched=%s firstTitle=%s',
+        'debug:message id=%s subject=%s date=%s hasSource=%s hasProcessed=%s htmlLength=%s newOfferCount=%s rows=%s projects=%s matched=%s firstTitle=%s',
         message.getId(),
         message.getSubject(),
         message.getDate(),
+        hasSource,
+        hasProcessed,
         htmlBody.length,
         newOfferCount,
         rows.length,
@@ -178,8 +193,7 @@ function getConfig_() {
     telegramChatId: properties.getProperty('TELEGRAM_CHAT_ID') || '',
     telegramParseMode: properties.getProperty('TELEGRAM_PARSE_MODE') || CONFIG_DEFAULTS.telegramParseMode,
     telegramMessageDelayMs: Number(properties.getProperty('TELEGRAM_MESSAGE_DELAY_MS') || CONFIG_DEFAULTS.telegramMessageDelayMs),
-    telegramMaxRetries: Number(properties.getProperty('TELEGRAM_MAX_RETRIES') || CONFIG_DEFAULTS.telegramMaxRetries),
-    processedMessagesProperty: CONFIG_DEFAULTS.processedMessagesProperty
+    telegramMaxRetries: Number(properties.getProperty('TELEGRAM_MAX_RETRIES') || CONFIG_DEFAULTS.telegramMaxRetries)
   };
 }
 
@@ -457,60 +471,35 @@ function getOrCreateLabel_(name) {
   return existing || GmailApp.createLabel(name);
 }
 
-function markThreadProcessed_(thread, processedLabel) {
-  thread.addLabel(processedLabel);
+function getGmailLabelIdsByName_(labelNames) {
+  const result = {};
+  const labelsResponse = Gmail.Users.Labels.list('me');
+  const labels = labelsResponse.labels || [];
+
+  labels.forEach(function(label) {
+    if (labelNames.indexOf(label.name) !== -1) {
+      result[label.name] = label.id;
+    }
+  });
+
+  return result;
 }
 
-function threadHasLabel_(thread, labelName) {
-  return thread.getLabels().some(function(label) {
-    return label.getName() === labelName;
+function getGmailApiMessage_(messageId) {
+  return Gmail.Users.Messages.get('me', messageId, {
+    format: 'minimal',
+    fields: 'id,labelIds'
   });
 }
 
-function getProcessedMessageIds_(config) {
-  const raw = PropertiesService.getScriptProperties().getProperty(config.processedMessagesProperty);
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (error) {
-    console.log('processed_messages:parse_error property=%s error=%s', config.processedMessagesProperty, error);
-    return {};
-  }
-}
-
-function isMessageProcessed_(processedMessageIds, messageId) {
-  return Object.prototype.hasOwnProperty.call(processedMessageIds, messageId);
-}
-
-function markMessageProcessed_(processedMessageIds, messageId) {
-  processedMessageIds[messageId] = Date.now();
-}
-
-function saveProcessedMessageIds_(config, processedMessageIds) {
-  pruneProcessedMessageIds_(processedMessageIds, 1000);
-  PropertiesService.getScriptProperties().setProperty(config.processedMessagesProperty, JSON.stringify(processedMessageIds));
-  console.log('processed_messages:saved count=%s', Object.keys(processedMessageIds).length);
-}
-
-function pruneProcessedMessageIds_(processedMessageIds, keepCount) {
-  const entries = Object.keys(processedMessageIds)
-    .map(function(messageId) {
-      return {
-        messageId: messageId,
-        timestamp: Number(processedMessageIds[messageId]) || 0
-      };
-    })
-    .sort(function(a, b) {
-      return b.timestamp - a.timestamp;
-    });
-
-  entries.slice(keepCount).forEach(function(entry) {
-    delete processedMessageIds[entry.messageId];
-  });
+function markGmailMessageProcessed_(messageId, processedLabelId) {
+  Gmail.Users.Messages.modify(
+    {
+      addLabelIds: [processedLabelId]
+    },
+    'me',
+    messageId
+  );
 }
 
 function splitKeywords_(value) {
