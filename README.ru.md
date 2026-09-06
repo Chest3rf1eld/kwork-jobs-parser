@@ -1,0 +1,123 @@
+# Kwork Jobs Parser
+
+Google Apps Script проект для мониторинга писем Kwork в Gmail и отправки подходящих заказов в Telegram.
+
+Скрипт читает письма с заданной Gmail-меткой, парсит карточки заказов Kwork, применяет фильтры по бюджету и ключевым словам, отправляет один Telegram-дайджест на одно письмо и помечает обработанные Gmail-сообщения отдельной меткой.
+
+## Возможности
+
+- Парсит уведомления Kwork из Gmail.
+- Отправляет подходящие заказы в Telegram через бота.
+- Отправляет одно Telegram-сообщение на одно письмо Kwork.
+- Разделяет заказы внутри дайджеста через `---`.
+- Показывает дату письма, бюджет, категорию, ник заказчика, уровень заказчика, количество проектов на бирже и процент найма.
+- Хранит статус обработки на уровне Gmail-сообщения через Advanced Gmail service, поэтому новые письма в старом треде могут быть обработаны.
+- При ошибке Telegram `429 Too Many Requests` ждет `retry_after + 5` секунд и повторяет отправку.
+
+## Требования
+
+- Google аккаунт с доступом к Gmail и Apps Script.
+- Telegram bot token из BotFather.
+- Telegram chat id личного чата или группы для уведомлений.
+- Node.js и npm для локальной разработки.
+- `clasp` для загрузки кода в Apps Script.
+
+## Установка
+
+1. Установи зависимости:
+
+```powershell
+npm install
+```
+
+2. Авторизуйся в `clasp`:
+
+```powershell
+.\node_modules\.bin\clasp.cmd login
+```
+
+3. Создай или привяжи Apps Script проект:
+
+```powershell
+.\node_modules\.bin\clasp.cmd create --type standalone --title "Kwork Jobs Parser"
+```
+
+Если проект Apps Script уже есть, создай локальный `.clasp.json` со своим `scriptId`. Не коммить `.clasp.json`; он добавлен в `.gitignore`.
+
+4. Включи Advanced Gmail service в Apps Script:
+
+- Открой редактор Apps Script.
+- Перейди в Services.
+- Добавь Gmail API.
+- Идентификатор сервиса должен быть `Gmail`.
+
+5. Загрузи код:
+
+```powershell
+.\node_modules\.bin\clasp.cmd push
+```
+
+6. Создай Gmail-фильтр для уведомлений Kwork и назначь письмам метку `TG_Notified`.
+
+7. В настройках Apps Script добавь Script properties:
+
+- `TELEGRAM_BOT_TOKEN`: токен Telegram-бота.
+- `TELEGRAM_CHAT_ID`: chat id, куда отправлять уведомления.
+- `GMAIL_LABEL`: исходная Gmail-метка, по умолчанию `TG_Notified`.
+- `PROCESSED_LABEL`: метка обработанных писем, по умолчанию `kwork-processed`.
+- `MIN_BUDGET_RUB`: минимальный бюджет, `0` отключает фильтр.
+- `MAX_BUDGET_RUB`: максимальный бюджет, `0` отключает фильтр.
+- `REQUIRED_KEYWORDS`: обязательные ключевые слова через запятую, пустое значение отключает фильтр.
+- `EXCLUDED_KEYWORDS`: запрещенные ключевые слова через запятую, пустое значение отключает фильтр.
+- `TELEGRAM_PARSE_MODE`: по умолчанию `HTML`.
+- `TELEGRAM_MESSAGE_DELAY_MS`: задержка между запросами к Telegram API, по умолчанию `1500`.
+- `TELEGRAM_MAX_RETRIES`: по умолчанию `3`.
+- `MAX_MESSAGES_PER_RUN`: максимум Gmail-сообщений за один запуск, по умолчанию `20`.
+
+8. Запусти `testTelegram()` в Apps Script и выдай разрешения.
+
+9. Запусти `setupTrigger()` один раз, чтобы создать триггер каждые 5 минут.
+
+10. Запусти `processKworkEmails()` вручную или дождись триггера.
+
+## Формат Уведомления
+
+Пример:
+
+```text
+Дата: 06.09.2026 12:09
+Заказов: 2
+
+---
+
+1 500 ₽ | Аудит по юзабилити
+Разработка и IT > Юзабилити, тесты и помощь > Юзабилити-аудит
+Заказчик: alexandrsalmin | ур. 6
+История: Проектов на бирже: 560 | Нанял: 37%
+Открыть заказ
+
+---
+
+500 ₽ | Помощь в изменении юзернейма бота
+Разработка и IT > Юзабилити, тесты и помощь > Компьютерная и IT помощь
+Заказчик: Elena_Benetskaya | ур. 1
+История: Проектов на бирже: 12 | Нанял: 75%
+Открыть заказ
+```
+
+## Локальные Команды
+
+```powershell
+.\node_modules\.bin\clasp.cmd status
+.\node_modules\.bin\clasp.cmd push
+.\node_modules\.bin\clasp.cmd pull
+.\node_modules\.bin\clasp.cmd open
+node --check Code.js
+```
+
+## Безопасность
+
+- Не храни Telegram токены, chat id, `.clasp.json`, `.env` файлы и экспортированные письма в git.
+- Runtime-секреты должны храниться только в Script properties Apps Script.
+- `.eml` файлы игнорируются, потому что могут содержать приватное содержимое писем.
+- Если Telegram bot token был где-то раскрыт вне Script properties, перевыпусти его в BotFather.
