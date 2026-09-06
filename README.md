@@ -1,90 +1,91 @@
 # Kwork Jobs Parser
 
-[Русская версия документации](README.ru.md)
+Google Apps Script проект для мониторинга писем Kwork в Gmail и отправки подходящих заказов в Telegram.
 
-Google Apps Script project for monitoring Kwork order emails in Gmail and forwarding matching orders to Telegram.
+Скрипт читает письма с заданной Gmail-меткой, парсит карточки заказов Kwork, применяет фильтры по бюджету и ключевым словам, отправляет один Telegram-дайджест на одно письмо и помечает обработанные Gmail-сообщения отдельной меткой.
 
-The script reads Gmail messages with the configured source label, parses Kwork order cards, applies budget and keyword filters, sends one Telegram digest per source email, and marks processed Gmail messages with a separate label.
+## Возможности
 
-## Features
+- Парсит уведомления Kwork из Gmail.
+- Отправляет подходящие заказы в Telegram через бота.
+- Отправляет одно Telegram-сообщение на одно письмо Kwork.
+- Разделяет заказы внутри дайджеста через `---`.
+- Показывает дату письма, бюджет, категорию, ник заказчика, уровень заказчика, количество проектов на бирже и процент найма.
+- Если у заказчика меньше 1000 проектов, добавляет один огонек за каждую сотню проектов.
+- Если у заказчика 1000 проектов или больше, показывает только хлопушки: одна хлопушка за каждую полную тысячу проектов.
+- Добавляет один огонек при проценте найма больше 80%.
+- Хранит статус обработки на уровне Gmail-сообщения через Advanced Gmail service, поэтому новые письма в старом треде могут быть обработаны.
+- При ошибке Telegram `429 Too Many Requests` ждет `retry_after + 5` секунд и повторяет отправку.
 
-- Parses Kwork email notifications from Gmail.
-- Sends matching orders to Telegram through a bot.
-- Sends one Telegram message per one Kwork email.
-- Separates orders inside the Telegram digest with `---`.
-- Shows email date, budget, category, buyer nickname, buyer level, number of buyer projects, and hire percentage.
-- Tracks processed state per Gmail message through the Advanced Gmail service, so new messages in an old Gmail thread can still be processed.
-- Handles Telegram `429 Too Many Requests` responses by waiting for `retry_after + 5` seconds before retrying.
+## Требования
 
-## Requirements
+- Google аккаунт с доступом к Gmail и Apps Script.
+- Telegram bot token из BotFather.
+- Telegram chat id личного чата или группы для уведомлений.
+- Node.js и npm для локальной разработки.
+- `clasp` для загрузки кода в Apps Script.
 
-- Google account with Gmail and Apps Script access.
-- Telegram bot token from BotFather.
-- Telegram chat id for the target private chat or group.
-- Node.js and npm for local development.
-- `clasp` for pushing code to Apps Script.
+## Установка
 
-## Installation
-
-1. Install dependencies:
+1. Установи зависимости:
 
 ```powershell
 npm install
 ```
 
-2. Log in to `clasp`:
+2. Авторизуйся в `clasp`:
 
 ```powershell
 .\node_modules\.bin\clasp.cmd login
 ```
 
-3. Create or link an Apps Script project:
+3. Создай или привяжи Apps Script проект:
 
 ```powershell
 .\node_modules\.bin\clasp.cmd create --type standalone --title "Kwork Jobs Parser"
 ```
 
-If you already have an Apps Script project, create a local `.clasp.json` with your `scriptId`. Do not commit `.clasp.json`; it is ignored by git.
+Если проект Apps Script уже есть, создай локальный `.clasp.json` со своим `scriptId`. Не коммить `.clasp.json`; он добавлен в `.gitignore`.
 
-4. Enable the Advanced Gmail service in Apps Script:
+4. Включи Advanced Gmail service в Apps Script:
 
-- Open the Apps Script editor.
-- Go to Services.
-- Add Gmail API.
-- Use service identifier `Gmail`.
+- Открой редактор Apps Script.
+- Перейди в Services.
+- Добавь Gmail API.
+- Идентификатор сервиса должен быть `Gmail`.
 
-5. Push the code:
+5. Загрузи код:
 
 ```powershell
 .\node_modules\.bin\clasp.cmd push
 ```
 
-6. Create a Gmail filter for Kwork notification emails and apply the label `TG_Notified`.
+6. Создай Gmail-фильтр для уведомлений Kwork и назначь письмам метку `TG_Notified`.
 
-7. Open Apps Script project settings and add script properties:
+7. В настройках Apps Script добавь Script properties:
 
-- `TELEGRAM_BOT_TOKEN`: your Telegram bot token.
-- `TELEGRAM_CHAT_ID`: Telegram chat id where notifications should be sent.
-- `GMAIL_LABEL`: source Gmail label, default `TG_Notified`.
-- `PROCESSED_LABEL`: processed Gmail label, default `kwork-processed`.
-- `MIN_BUDGET_RUB`: minimum budget filter, `0` disables it.
-- `MAX_BUDGET_RUB`: maximum budget filter, `0` disables it.
-- `REQUIRED_KEYWORDS`: comma-separated required keywords, empty disables it.
-- `EXCLUDED_KEYWORDS`: comma-separated excluded keywords, empty disables it.
-- `TELEGRAM_PARSE_MODE`: default `HTML`.
-- `TELEGRAM_MESSAGE_DELAY_MS`: delay between Telegram API calls, default `1500`.
-- `TELEGRAM_MAX_RETRIES`: default `3`.
-- `MAX_MESSAGES_PER_RUN`: maximum Gmail messages processed per run, default `20`.
+- `TELEGRAM_BOT_TOKEN`: токен Telegram-бота.
+- `TELEGRAM_CHAT_ID`: chat id, куда отправлять уведомления.
+- `GMAIL_LABEL`: исходная Gmail-метка, по умолчанию `TG_Notified`.
+- `PROCESSED_LABEL`: метка обработанных писем, по умолчанию `kwork-processed`.
+- `MIN_BUDGET_RUB`: минимальный бюджет, `0` отключает фильтр.
+- `MAX_BUDGET_RUB`: максимальный бюджет, `0` отключает фильтр.
+- `REQUIRED_KEYWORDS`: обязательные ключевые слова через запятую, пустое значение отключает фильтр.
+- `EXCLUDED_KEYWORDS`: запрещенные ключевые слова через запятую, пустое значение отключает фильтр.
+- `TELEGRAM_PARSE_MODE`: по умолчанию `HTML`.
+- `TELEGRAM_MESSAGE_DELAY_MS`: задержка между запросами к Telegram API, по умолчанию `1500`.
+- `TELEGRAM_MAX_RETRIES`: по умолчанию `3`.
+- `MAX_MESSAGES_PER_RUN`: максимум Gmail-сообщений за один запуск, по умолчанию `20`.
 
-8. Run `testTelegram()` once in Apps Script and grant permissions.
+8. Запусти `testTelegram()` в Apps Script и выдай разрешения.
 
-9. Run `setupTrigger()` once to create a 5-minute time trigger.
+9. Запусти `setupTrigger()` один раз, чтобы создать триггер каждые 5 минут.
 
-10. Run `processKworkEmails()` manually once or wait for the trigger.
+10. Запусти `processKworkEmails()` вручную или дождись триггера.
 
-## Telegram Output
+## Формат Уведомления
 
-Example:
+Пример:
 
 ```text
 Дата: 06.09.2026 12:09
@@ -95,7 +96,7 @@ Example:
 1 500 ₽ | Аудит по юзабилити
 Разработка и IT > Юзабилити, тесты и помощь > Юзабилити-аудит
 Заказчик: alexandrsalmin | ур. 6
-История: Проектов на бирже: 560 | Нанял: 37%
+История: Проектов на бирже: 1560 🎉 | Нанял: 37%
 Открыть заказ
 
 ---
@@ -103,11 +104,20 @@ Example:
 500 ₽ | Помощь в изменении юзернейма бота
 Разработка и IT > Юзабилити, тесты и помощь > Компьютерная и IT помощь
 Заказчик: Elena_Benetskaya | ур. 1
-История: Проектов на бирже: 12 | Нанял: 75%
+История: Проектов на бирже: 12 | Нанял: 85% 🔥
 Открыть заказ
 ```
 
-## Local Commands
+Примеры маркеров по количеству проектов:
+
+- `99` -> `99`
+- `100` -> `100 🔥`
+- `560` -> `560 🔥🔥🔥🔥🔥`
+- `1000` -> `1000 🎉`
+- `1560` -> `1560 🎉`
+- `2500` -> `2500 🎉🎉`
+
+## Локальные Команды
 
 ```powershell
 .\node_modules\.bin\clasp.cmd status
@@ -117,9 +127,9 @@ Example:
 node --check Code.js
 ```
 
-## Security Notes
+## Безопасность
 
-- Do not store Telegram tokens, chat ids, `.clasp.json`, `.env` files, or exported emails in git.
-- Store runtime secrets only in Apps Script script properties.
-- `.eml` files are ignored because they may contain private email content.
-- If a Telegram bot token was exposed outside script properties, rotate it in BotFather.
+- Не храни Telegram токены, chat id, `.clasp.json`, `.env` файлы и экспортированные письма в git.
+- Runtime-секреты должны храниться только в Script properties Apps Script.
+- `.eml` файлы игнорируются, потому что могут содержать приватное содержимое писем.
+- Если Telegram bot token был где-то раскрыт вне Script properties, перевыпусти его в BotFather.

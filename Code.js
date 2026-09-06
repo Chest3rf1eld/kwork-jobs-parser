@@ -215,7 +215,7 @@ function parseProjectRow_(rowHtml, messageDate) {
 
   const buyerLink = extractAttribute_(cells[1], /<a[^>]+href="([^"]+)"/i);
   const buyerName = cleanText_(extractFirstBuyerName_(cells[1]));
-  const buyerLevel = extractBuyerLevel_(cells[1]);
+  const buyerLevel = extractBuyerLevelValue_(cells[1]);
   const buyerStats = extractBuyerStats_(cells[1]);
   const budgetText = cleanText_(stripTags_(cells[2]));
   const budgetRub = extractBudgetRub_(budgetText);
@@ -258,12 +258,12 @@ function extractFirstBuyerName_(html) {
   return spans.length > 0 ? spans[spans.length - 1] : '';
 }
 
-function extractBuyerLevel_(html) {
+function extractBuyerLevelValue_(html) {
   const levelBadgeMatch = String(html || '').match(/<div\b[^>]*border-radius\s*:\s*100%[^>]*>\s*([\s\S]*?)\s*<\/div>/i);
   if (levelBadgeMatch) {
     const badgeText = cleanText_(levelBadgeMatch[1]);
     if (/^\d+$/.test(badgeText)) {
-      return 'ур. ' + badgeText;
+      return badgeText;
     }
   }
 
@@ -378,7 +378,7 @@ function sendTelegramDigest_(projects, message, config) {
 
 function formatProjectCard_(project) {
   const budget = formatBudget_(project);
-  const title = project.title || 'Untitled project';
+  const title = project.title || 'Без названия';
   const lines = ['<b>' + escapeHtml_(budget + ' | ' + title) + '</b>'];
 
   if (project.category) {
@@ -388,7 +388,7 @@ function formatProjectCard_(project) {
   if (project.buyerName) {
     let buyerLine = '<b>Заказчик:</b> ' + escapeHtml_(project.buyerName);
     if (project.buyerLevel) {
-      buyerLine += ' | ' + escapeHtml_(project.buyerLevel);
+      buyerLine += ' | ' + escapeHtml_('ур. ' + project.buyerLevel);
     }
     lines.push(buyerLine);
   }
@@ -426,17 +426,41 @@ function formatMessageDate_(date) {
 function formatProjectsOnMarket_(text) {
   const value = cleanText_(text);
   const match = value.match(/\d+/);
-  return match ? match[0] : value;
+  if (!match) {
+    return value;
+  }
+
+  const projectsCount = Number(match[0]);
+  return match[0] + formatProjectMarkers_(projectsCount);
 }
 
 function formatHiredPercent_(text) {
   const value = cleanText_(text);
   const percentMatch = value.match(/\d+(?:[.,]\d+)?\s*%/);
   if (percentMatch) {
-    return percentMatch[0].replace(/\s+/g, '');
+    const percentText = percentMatch[0].replace(/\s+/g, '');
+    const percentValue = Number(percentText.replace('%', '').replace(',', '.'));
+    return percentText + formatFlames_(percentValue > 80 ? 1 : 0);
   }
 
   return value;
+}
+
+function formatFlames_(count) {
+  if (count <= 0) {
+    return '';
+  }
+
+  return ' ' + Array(count + 1).join('🔥');
+}
+
+function formatProjectMarkers_(projectsCount) {
+  const partyCount = Math.floor(projectsCount / 1000);
+  if (partyCount > 0) {
+    return ' ' + Array(partyCount + 1).join('🎉');
+  }
+
+  return formatFlames_(Math.floor(projectsCount / 100));
 }
 
 function sendTelegramMessage_(text, config) {
