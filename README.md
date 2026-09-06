@@ -1,6 +1,7 @@
 # Kwork Jobs Parser
 
 Google Apps Script project for monitoring Kwork order emails in Gmail and forwarding matching orders to Telegram.
+Each Kwork email is sent as one Telegram digest with the email date at the top and `---` between orders.
 
 ## Stack
 
@@ -28,6 +29,7 @@ Recommended filter:
 - subject: order notification keywords
 
 The script reads only messages with the configured label and adds `kwork-processed` after handling them.
+Processed state is stored per Gmail message through the Gmail API, so new emails in an old Gmail thread can still be processed.
 
 ## Script properties
 
@@ -45,6 +47,7 @@ Open Apps Script project settings and add these script properties:
 - `TELEGRAM_PARSE_MODE` default: `HTML`
 - `TELEGRAM_MESSAGE_DELAY_MS` default: `1500`
 - `TELEGRAM_MAX_RETRIES` default: `3`
+- `MAX_MESSAGES_PER_RUN` default: `20`
 
 `MIN_BUDGET_RUB` and `MAX_BUDGET_RUB` use `0` to mean "disabled".
 
@@ -68,4 +71,5 @@ Open Apps Script project settings and add these script properties:
 
 - Email parsing is based on notification content and may need adjustments if Kwork changes email format.
 - Budget extraction is heuristic and currently expects Latin currency markers such as `RUB`.
+- The script uses the Advanced Gmail service to search only messages with `TG_Notified` and without `kwork-processed`.
 - If you want, the next step is moving filters into a Google Sheet for non-code editing.

@@ -8,7 +8,8 @@ const CONFIG_DEFAULTS = {
   excludedKeywords: '',
   telegramParseMode: 'HTML',
   telegramMessageDelayMs: 1500,
-  telegramMaxRetries: 3
+  telegramMaxRetries: 3,
+  maxMessagesPerRun: 20
 };
 
 let lastTelegramSendAtMs_ = 0;
@@ -16,69 +17,43 @@ let nextTelegramSendAtMs_ = 0;
 
 function processKworkEmails() {
   const config = getConfig_();
-  const sourceLabel = getOrCreateLabel_(config.gmailLabel);
-  const processedLabel = getOrCreateLabel_(config.processedLabel);
+  getOrCreateLabel_(config.gmailLabel);
+  getOrCreateLabel_(config.processedLabel);
   const gmailLabelIds = getGmailLabelIdsByName_([config.gmailLabel, config.processedLabel]);
   const sourceLabelId = gmailLabelIds[config.gmailLabel];
   const processedLabelId = gmailLabelIds[config.processedLabel];
-  const threads = sourceLabel.getThreads(0, 50);
-  console.log('processKworkEmails:start label=%s sourceLabelId=%s processedLabel=%s processedLabelId=%s threads=%s', config.gmailLabel, sourceLabelId, config.processedLabel, processedLabelId, threads.length);
+  console.log('processKworkEmails:start label=%s sourceLabelId=%s processedLabel=%s processedLabelId=%s maxMessages=%s', config.gmailLabel, sourceLabelId, config.processedLabel, processedLabelId, config.maxMessagesPerRun);
 
   if (!sourceLabelId || !processedLabelId) {
     throw new Error('Required Gmail labels were not found through Gmail API.');
   }
 
-  threads.forEach(function(thread) {
-    console.log('thread:start id=%s subject=%s messageCount=%s', thread.getId(), thread.getFirstMessageSubject(), thread.getMessageCount());
+  const candidates = listCandidateGmailMessages_(sourceLabelId, config);
+  console.log('processKworkEmails:candidates count=%s', candidates.length);
 
-    const messages = thread.getMessages();
-    let foundProjectsInThread = false;
-    let processedMessagesInThread = 0;
-
-    messages.forEach(function(message) {
-      const gmailMessage = getGmailApiMessage_(message.getId());
-      const messageLabelIds = gmailMessage.labelIds || [];
-
-      if (messageLabelIds.indexOf(sourceLabelId) === -1) {
-        console.log('message:skip_without_source_label id=%s subject=%s', message.getId(), message.getSubject());
-        return;
-      }
-
-      if (messageLabelIds.indexOf(processedLabelId) !== -1) {
-        console.log('message:skip_processed id=%s subject=%s', message.getId(), message.getSubject());
-        return;
-      }
-
-      console.log('message:start id=%s subject=%s date=%s', message.getId(), message.getSubject(), message.getDate());
-      const projects = parseKworkProjectsFromMessage_(message, config);
-      console.log('message:projects_found id=%s count=%s', message.getId(), projects.length);
-      if (projects.length === 0) {
-        console.log('message:not_marked_no_projects id=%s', message.getId());
-        return;
-      }
-
-      foundProjectsInThread = true;
-      const matchingProjects = projects.filter(function(project) {
-        return matchesFilters_(project, config);
-      });
-      console.log('message:projects_matched id=%s count=%s', message.getId(), matchingProjects.length);
-
-      if (matchingProjects.length > 0) {
-        sendTelegramDigest_(matchingProjects, message, config);
-      } else {
-        console.log('message:no_matches id=%s', message.getId());
-      }
-
-      markGmailMessageProcessed_(message.getId(), processedLabelId);
-      processedMessagesInThread++;
-      console.log('message:marked_processed id=%s labelId=%s', message.getId(), processedLabelId);
-    });
-
-    if (foundProjectsInThread) {
-      console.log('thread:done id=%s processedMessages=%s', thread.getId(), processedMessagesInThread);
-    } else {
-      console.log('thread:not_marked_no_projects id=%s', thread.getId());
+  candidates.forEach(function(candidate) {
+    const message = GmailApp.getMessageById(candidate.id);
+    console.log('message:start id=%s subject=%s date=%s', message.getId(), message.getSubject(), message.getDate());
+    const projects = parseKworkProjectsFromMessage_(message, config);
+    console.log('message:projects_found id=%s count=%s', message.getId(), projects.length);
+    if (projects.length === 0) {
+      console.log('message:not_marked_no_projects id=%s', message.getId());
+      return;
     }
+
+    const matchingProjects = projects.filter(function(project) {
+      return matchesFilters_(project, config);
+    });
+    console.log('message:projects_matched id=%s count=%s', message.getId(), matchingProjects.length);
+
+    if (matchingProjects.length > 0) {
+      sendTelegramDigest_(matchingProjects, message, config);
+    } else {
+      console.log('message:no_matches id=%s', message.getId());
+    }
+
+    markGmailMessageProcessed_(message.getId(), processedLabelId);
+    console.log('message:marked_processed id=%s labelId=%s', message.getId(), processedLabelId);
   });
 
   console.log('processKworkEmails:done');
@@ -112,7 +87,10 @@ function setDefaultConfig() {
     MAX_BUDGET_RUB: CONFIG_DEFAULTS.maxBudgetRub,
     REQUIRED_KEYWORDS: CONFIG_DEFAULTS.requiredKeywords,
     EXCLUDED_KEYWORDS: CONFIG_DEFAULTS.excludedKeywords,
-    TELEGRAM_PARSE_MODE: CONFIG_DEFAULTS.telegramParseMode
+    TELEGRAM_PARSE_MODE: CONFIG_DEFAULTS.telegramParseMode,
+    TELEGRAM_MESSAGE_DELAY_MS: CONFIG_DEFAULTS.telegramMessageDelayMs,
+    TELEGRAM_MAX_RETRIES: CONFIG_DEFAULTS.telegramMaxRetries,
+    MAX_MESSAGES_PER_RUN: CONFIG_DEFAULTS.maxMessagesPerRun
   });
 }
 
@@ -130,49 +108,48 @@ function testTelegram() {
 
 function debugKworkEmails() {
   const config = getConfig_();
-  const sourceLabel = getOrCreateLabel_(config.gmailLabel);
+  getOrCreateLabel_(config.gmailLabel);
   getOrCreateLabel_(config.processedLabel);
   const gmailLabelIds = getGmailLabelIdsByName_([config.gmailLabel, config.processedLabel]);
   const sourceLabelId = gmailLabelIds[config.gmailLabel];
   const processedLabelId = gmailLabelIds[config.processedLabel];
-  const threads = sourceLabel.getThreads(0, 10);
-  console.log('debugKworkEmails:start label=%s sourceLabelId=%s processedLabel=%s processedLabelId=%s threads=%s', config.gmailLabel, sourceLabelId, config.processedLabel, processedLabelId, threads.length);
+  console.log('debugKworkEmails:start label=%s sourceLabelId=%s processedLabel=%s processedLabelId=%s maxMessages=%s', config.gmailLabel, sourceLabelId, config.processedLabel, processedLabelId, config.maxMessagesPerRun);
 
-  threads.forEach(function(thread) {
-    console.log('debug:thread id=%s subject=%s messageCount=%s', thread.getId(), thread.getFirstMessageSubject(), thread.getMessageCount());
+  if (!sourceLabelId || !processedLabelId) {
+    throw new Error('Required Gmail labels were not found through Gmail API.');
+  }
 
-    thread.getMessages().slice(-3).forEach(function(message) {
-      const gmailMessage = getGmailApiMessage_(message.getId());
-      const messageLabelIds = gmailMessage.labelIds || [];
-      const hasSource = messageLabelIds.indexOf(sourceLabelId) !== -1;
-      const hasProcessed = messageLabelIds.indexOf(processedLabelId) !== -1;
-      const htmlBody = message.getBody() || '';
-      const newOfferCount = countMatches_(htmlBody, /new_offer\?project/g);
-      const rows = extractProjectRows_(htmlBody);
-      const projects = rows.map(function(rowHtml) {
-        return parseProjectRow_(rowHtml, message.getDate());
-      }).filter(function(project) {
-        return !!project;
-      });
-      const matched = projects.filter(function(project) {
-        return matchesFilters_(project, config);
-      });
+  const candidates = listCandidateGmailMessages_(sourceLabelId, config);
+  console.log('debug:candidates count=%s ids=%s', candidates.length, candidates.map(function(candidate) {
+    return candidate.id;
+  }).join(','));
 
-      console.log(
-        'debug:message id=%s subject=%s date=%s hasSource=%s hasProcessed=%s htmlLength=%s newOfferCount=%s rows=%s projects=%s matched=%s firstTitle=%s',
-        message.getId(),
-        message.getSubject(),
-        message.getDate(),
-        hasSource,
-        hasProcessed,
-        htmlBody.length,
-        newOfferCount,
-        rows.length,
-        projects.length,
-        matched.length,
-        projects[0] ? projects[0].title : ''
-      );
+  candidates.slice(0, 5).forEach(function(candidate) {
+    const message = GmailApp.getMessageById(candidate.id);
+    const htmlBody = message.getBody() || '';
+    const newOfferCount = countMatches_(htmlBody, /new_offer\?project/g);
+    const rows = extractProjectRows_(htmlBody);
+    const projects = rows.map(function(rowHtml) {
+      return parseProjectRow_(rowHtml, message.getDate());
+    }).filter(function(project) {
+      return !!project;
     });
+    const matched = projects.filter(function(project) {
+      return matchesFilters_(project, config);
+    });
+
+    console.log(
+      'debug:message id=%s subject=%s date=%s htmlLength=%s newOfferCount=%s rows=%s projects=%s matched=%s firstTitle=%s',
+      message.getId(),
+      message.getSubject(),
+      message.getDate(),
+      htmlBody.length,
+      newOfferCount,
+      rows.length,
+      projects.length,
+      matched.length,
+      projects[0] ? projects[0].title : ''
+    );
   });
 
   console.log('debugKworkEmails:done');
@@ -193,7 +170,8 @@ function getConfig_() {
     telegramChatId: properties.getProperty('TELEGRAM_CHAT_ID') || '',
     telegramParseMode: properties.getProperty('TELEGRAM_PARSE_MODE') || CONFIG_DEFAULTS.telegramParseMode,
     telegramMessageDelayMs: Number(properties.getProperty('TELEGRAM_MESSAGE_DELAY_MS') || CONFIG_DEFAULTS.telegramMessageDelayMs),
-    telegramMaxRetries: Number(properties.getProperty('TELEGRAM_MAX_RETRIES') || CONFIG_DEFAULTS.telegramMaxRetries)
+    telegramMaxRetries: Number(properties.getProperty('TELEGRAM_MAX_RETRIES') || CONFIG_DEFAULTS.telegramMaxRetries),
+    maxMessagesPerRun: Number(properties.getProperty('MAX_MESSAGES_PER_RUN') || CONFIG_DEFAULTS.maxMessagesPerRun)
   };
 }
 
@@ -237,6 +215,7 @@ function parseProjectRow_(rowHtml, messageDate) {
 
   const buyerLink = extractAttribute_(cells[1], /<a[^>]+href="([^"]+)"/i);
   const buyerName = cleanText_(extractFirstBuyerName_(cells[1]));
+  const buyerLevel = extractBuyerLevel_(cells[1]);
   const buyerStats = extractBuyerStats_(cells[1]);
   const budgetText = cleanText_(stripTags_(cells[2]));
   const budgetRub = extractBudgetRub_(budgetText);
@@ -245,6 +224,7 @@ function parseProjectRow_(rowHtml, messageDate) {
     title,
     category,
     buyerName,
+    buyerLevel,
     buyerStats.projectsText,
     buyerStats.hiredText,
     budgetText
@@ -255,6 +235,7 @@ function parseProjectRow_(rowHtml, messageDate) {
     category: category,
     url: projectLink,
     buyerName: buyerName,
+    buyerLevel: buyerLevel,
     buyerUrl: buyerLink,
     buyerProjectsText: buyerStats.projectsText,
     buyerHiredText: buyerStats.hiredText,
@@ -277,7 +258,46 @@ function extractFirstBuyerName_(html) {
   return spans.length > 0 ? spans[spans.length - 1] : '';
 }
 
+function extractBuyerLevel_(html) {
+  const levelBadgeMatch = String(html || '').match(/<div\b[^>]*border-radius\s*:\s*100%[^>]*>\s*([\s\S]*?)\s*<\/div>/i);
+  if (levelBadgeMatch) {
+    const badgeText = cleanText_(levelBadgeMatch[1]);
+    if (/^\d+$/.test(badgeText)) {
+      return 'ур. ' + badgeText;
+    }
+  }
+
+  const attributeValues = [];
+  String(html || '').replace(/\b(?:title|alt)=["']([^"']+)["']/gi, function(full, value) {
+    attributeValues.push(cleanText_(value));
+    return full;
+  });
+
+  const level = attributeValues.find(function(value) {
+    return /уров|level|beginner|advanced|expert|pro/i.test(value);
+  });
+
+  if (level) {
+    return level;
+  }
+
+  const text = cleanText_(html);
+  const match = text.match(/(?:уровень|level)\s*[:\-]?\s*([^\|,;]+)/i);
+  return match ? cleanText_(match[1]) : '';
+}
+
 function extractBuyerStats_(html) {
+  const text = cleanText_(html);
+  const projectsMatch = text.match(/(\d+)\s+(?:проект(?:ов|а)?\s+на\s+бирже|projects?\s+on\s+market)/i);
+  const hiredMatch = text.match(/(\d+(?:[.,]\d+)?)\s*%\s*(?:нанят|hired)/i);
+
+  if (projectsMatch || hiredMatch) {
+    return {
+      projectsText: projectsMatch ? projectsMatch[0] : '',
+      hiredText: hiredMatch ? hiredMatch[0] : ''
+    };
+  }
+
   const divs = extractAllInnerHtml_(html, /<div\b[^>]*>([\s\S]*?)<\/div>/gi)
     .map(function(item) {
       return cleanText_(item);
@@ -285,10 +305,16 @@ function extractBuyerStats_(html) {
     .filter(function(item) {
       return item.length > 0;
     });
+  const projectsText = divs.find(function(item) {
+    return /проект|project/i.test(item);
+  }) || '';
+  const hiredText = divs.find(function(item) {
+    return /наня|hire|hired|%/i.test(item);
+  }) || '';
 
   return {
-    projectsText: divs[0] || '',
-    hiredText: divs[1] || ''
+    projectsText: projectsText,
+    hiredText: hiredText
   };
 }
 
@@ -333,64 +359,84 @@ function matchesFilters_(project, config) {
 function sendTelegramDigest_(projects, message, config) {
   console.log('telegram:digest_start messageId=%s projectCount=%s', message.getId(), projects.length);
   const header = [
-    '<b>Kwork projects: ' + projects.length + '</b>',
-    '<b>Date:</b> ' + Utilities.formatDate(message.getDate(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
-    ''
+    '<b>Дата:</b> ' + escapeHtml_(formatMessageDate_(message.getDate())),
+    '<b>Заказов:</b> ' + projects.length
   ].join('\n');
-
-  let currentMessage = header;
-
-  projects.forEach(function(project, index) {
-    const card = formatProjectCard_(project, index + 1);
-    const separator = currentMessage ? '\n\n' : '';
-
-    if ((currentMessage + separator + card).length > 3500) {
-      console.log('telegram:digest_flush partialLength=%s nextTitle=%s', currentMessage.length, project.title);
-      sendTelegramMessage_(currentMessage, config);
-      currentMessage = card;
-      return;
-    }
-
-    currentMessage += separator + card;
+  const separator = '\n\n---\n\n';
+  const cards = projects.map(function(project) {
+    return formatProjectCard_(project);
   });
+  const digest = header + separator + cards.join(separator);
 
-  if (currentMessage) {
-    console.log('telegram:digest_send finalLength=%s', currentMessage.length);
-    sendTelegramMessage_(currentMessage, config);
+  console.log('telegram:digest_send messageId=%s length=%s', message.getId(), digest.length);
+  if (digest.length > 4096) {
+    console.log('telegram:digest_over_limit messageId=%s length=%s limit=4096', message.getId(), digest.length);
   }
-
+  sendTelegramMessage_(digest, config);
   console.log('telegram:digest_done messageId=%s', message.getId());
 }
 
-function formatProjectCard_(project, index) {
-  const lines = [
-    '<b>' + index + '. ' + escapeHtml_(project.title || 'Untitled project') + '</b>'
-  ];
-
-  if (project.budgetText) {
-    lines.push('<b>Budget:</b> ' + escapeHtml_(project.budgetText));
-  }
+function formatProjectCard_(project) {
+  const budget = formatBudget_(project);
+  const title = project.title || 'Untitled project';
+  const lines = ['<b>' + escapeHtml_(budget + ' | ' + title) + '</b>'];
 
   if (project.category) {
-    lines.push('<b>Category:</b> ' + escapeHtml_(project.category));
+    lines.push(escapeHtml_(project.category));
   }
 
   if (project.buyerName) {
-    let buyerLine = '<b>Buyer:</b> ' + escapeHtml_(project.buyerName);
-    if (project.buyerProjectsText) {
-      buyerLine += ' | ' + escapeHtml_(project.buyerProjectsText);
-    }
-    if (project.buyerHiredText) {
-      buyerLine += ' | ' + escapeHtml_(project.buyerHiredText);
+    let buyerLine = '<b>Заказчик:</b> ' + escapeHtml_(project.buyerName);
+    if (project.buyerLevel) {
+      buyerLine += ' | ' + escapeHtml_(project.buyerLevel);
     }
     lines.push(buyerLine);
   }
 
+  const historyParts = [];
+  if (project.buyerProjectsText) {
+    historyParts.push('Проектов на бирже: ' + formatProjectsOnMarket_(project.buyerProjectsText));
+  }
+  if (project.buyerHiredText) {
+    historyParts.push('Нанял: ' + formatHiredPercent_(project.buyerHiredText));
+  }
+  if (historyParts.length > 0) {
+    lines.push('<b>История:</b> ' + escapeHtml_(historyParts.join(' | ')));
+  }
+
   if (project.url) {
-    lines.push('<a href="' + escapeHtml_(project.url) + '">Open project</a>');
+    lines.push('<a href="' + escapeHtml_(project.url) + '">Открыть заказ</a>');
   }
 
   return lines.join('\n');
+}
+
+function formatBudget_(project) {
+  if (project.budgetRub > 0) {
+    return String(project.budgetRub).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽';
+  }
+
+  return project.budgetText || 'Бюджет не указан';
+}
+
+function formatMessageDate_(date) {
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'dd.MM.yyyy HH:mm');
+}
+
+function formatProjectsOnMarket_(text) {
+  const value = cleanText_(text);
+  const match = value.match(/\d+/);
+  return match ? match[0] : value;
+}
+
+function formatHiredPercent_(text) {
+  const value = cleanText_(text);
+  const percentMatch = value.match(/\d+(?:[.,]\d+)?\s*%/);
+  if (percentMatch) {
+    return percentMatch[0].replace(/\s+/g, '');
+  }
+
+  return value;
 }
 
 function sendTelegramMessage_(text, config) {
@@ -485,11 +531,16 @@ function getGmailLabelIdsByName_(labelNames) {
   return result;
 }
 
-function getGmailApiMessage_(messageId) {
-  return Gmail.Users.Messages.get('me', messageId, {
-    format: 'minimal',
-    fields: 'id,labelIds'
+function listCandidateGmailMessages_(sourceLabelId, config) {
+  const maxMessages = Math.max(1, Math.min(Number(config.maxMessagesPerRun) || CONFIG_DEFAULTS.maxMessagesPerRun, 100));
+  const response = Gmail.Users.Messages.list('me', {
+    labelIds: [sourceLabelId],
+    q: '-label:' + config.processedLabel,
+    maxResults: maxMessages,
+    fields: 'messages/id,nextPageToken,resultSizeEstimate'
   });
+
+  return response.messages || [];
 }
 
 function markGmailMessageProcessed_(messageId, processedLabelId) {
